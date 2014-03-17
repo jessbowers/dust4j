@@ -102,7 +102,7 @@ public class DustCompilingFilter implements Filter {
     
     private static final String DUST_TEMPLATE_CACHE_ATTR = "com.noroutine.dust4j.dustTemplateCache";
     
-    private static final String DEFAULT_NAME_REGEX = "/(.*).dust.js$";
+    private static final String DEFAULT_NAME_REGEX = "/(.*)\\.dust\\.js$";
     
     // init-param keys
     private static final String PARAM_COMPILER_FACTORY = "compilerFactory";
@@ -192,10 +192,7 @@ public class DustCompilingFilter implements Filter {
                         chain.doFilter(req, responseWrapper);
                         
                         if (response.getStatus() == HttpServletResponse.SC_NOT_FOUND) {
-                            log.info("ERROR: No dust.js template can be found at "+uri);
-                            return;
-                        } else if (response.getStatus() != HttpServletResponse.SC_OK) {
-                            log.info("ERROR: Dust.js template could not be processed at "+uri);
+                            log.warning("ERROR: No dust.js template can be found at "+uri);
                             return;
                         }
 
@@ -274,7 +271,7 @@ public class DustCompilingFilter implements Filter {
     
     public void setCompilerFactory(DustCompilerFactory compilerFactory) {
         if (compilerFactory == null) {
-            throw new IllegalArgumentException("compilerFactory bust be not null");
+            throw new IllegalArgumentException("compilerFactory must be not null");
         }
         this.compilerFactory = compilerFactory;
         this.compiler = null;
@@ -288,7 +285,7 @@ public class DustCompilingFilter implements Filter {
         String contextPath = req.getContextPath();
         String servletPath = req.getServletPath();
         String pathInfo = req.getPathInfo();
-        String queryString = req.getQueryString();
+//        String queryString = req.getQueryString();
         
         StringBuffer url =  new StringBuffer();
         url.append(contextPath).append(servletPath);
@@ -296,9 +293,9 @@ public class DustCompilingFilter implements Filter {
         if (pathInfo != null) {
             url.append(pathInfo);
         }
-        if (queryString != null) {
-            url.append("?").append(queryString);
-        }
+//        if (queryString != null) {
+//            url.append("?").append(queryString);
+//        }
         return url.toString();
     }
 }
