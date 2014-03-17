@@ -16,7 +16,7 @@ import java.util.logging.Logger;
  *
  * <h3>Setup</h3>
  * <p>
- * To setup filter in your application, add the definitions to yout web.xml:
+ * To setup filter in your application, add the definitions to your web.xml:
  *
  * <pre>&nbsp;{@code
  *
@@ -97,101 +97,110 @@ import java.util.logging.Logger;
  */
 
 public class DustCompilingFilter implements Filter {
-
+    
     private static final Logger log = Logger.getLogger(DustCompilingFilter.class.getCanonicalName());
-
+    
     private static final String DUST_TEMPLATE_CACHE_ATTR = "com.noroutine.dust4j.dustTemplateCache";
-
+    
     private static final String DEFAULT_NAME_REGEX = "/(.*).dust.js$";
-
+    
     // init-param keys
     private static final String PARAM_COMPILER_FACTORY = "compilerFactory";
     private static final String PARAM_CACHE = "cache";
     private static final String PARAM_ETAG = "eTag";
     private static final String PARAM_NAME_REGEX = "templateNameRegex";
-
+    
     private DustCompilerFactory compilerFactory = new DefaultDustCompilerFactory();
-
+    
     private DustCompiler compiler;
-
+    
     private String templateNameRegex = DEFAULT_NAME_REGEX;
-
+    
     private boolean cacheEnabled = true;
-
+    
     private boolean eTagEnabled = false;
-
+    
     public DustCompilingFilter() {
     }
-
+    
     @Override
     public void init(FilterConfig filterConfig) throws ServletException {
         String appCtx = filterConfig.getServletContext().getContextPath();
-
+        
         if (filterConfig.getInitParameter(PARAM_CACHE) != null) {
             cacheEnabled = Boolean.valueOf(filterConfig.getInitParameter(PARAM_CACHE));
         }
-
+        
         if (filterConfig.getInitParameter(PARAM_ETAG) != null) {
             eTagEnabled = Boolean.valueOf(filterConfig.getInitParameter(PARAM_ETAG));
         }
-
+        
         if (filterConfig.getInitParameter(PARAM_NAME_REGEX) != null) {
             templateNameRegex = filterConfig.getInitParameter(PARAM_NAME_REGEX);
         }
-
+        
         try {
             Class<? extends DustCompilerFactory> compilerFactoryClass;
             if (filterConfig.getInitParameter(PARAM_COMPILER_FACTORY) != null) {
                 compilerFactoryClass = (Class<? extends DustCompilerFactory>) Class.forName(filterConfig.getInitParameter(PARAM_COMPILER_FACTORY));
                 compilerFactory = compilerFactoryClass.newInstance();
             }
-
+            
         } catch (Exception e) {
             throw new ServletException(e);
         }
     }
-
+    
     @Override
     public void doFilter(ServletRequest req, ServletResponse resp, FilterChain chain) throws IOException, ServletException {
         if (req instanceof HttpServletRequest) {
             HttpServletRequest request = (HttpServletRequest) req;
             HttpServletResponse response = (HttpServletResponse) resp;
-
+            
             String appCtx = request.getSession().getServletContext().getContextPath();
             String uri = DustCompilingFilter.getURL(request);
             String uriRegex = getTemplateNameRegex(appCtx, templateNameRegex);
-
+            
             if (uri.matches(uriRegex)) {
                 if (this.compiler == null) {
                     this.compiler = this.compilerFactory.createDustCompiler();
                 }
-
+                
                 if (this.compiler == null) {
                     log.log(Level.SEVERE, "Failed to obtain compiler instance, skipping for this request");
                 } else {
                     boolean cache = Boolean.valueOf(request.getParameter("cache"));
                     String version = request.getParameter("version");
-
+                    
                     // Check If-None-Match vs version
                     String clientETag = request.getHeader("If-None-Match");
                     if (cache && eTagEnabled && version != null && clientETag != null && version.equals(clientETag)) {
                         response.setStatus(HttpServletResponse.SC_NOT_MODIFIED);
                         return;
                     }
-
+                    
                     PrintWriter out = response.getWriter();
                     Map<String, String> templateCache = getDustTemplateCache(request);
                     String templateName = uri.replaceFirst(uriRegex, "$1");
                     String template;
-
+                    
                     if (cache && cacheEnabled && templateCache.containsKey(templateName)) {
                         log.info("Template cache hit for " + templateName);
                         template = templateCache.get(templateName);
                     } else {
                         CharResponseWrapper responseWrapper = new CharResponseWrapper(response);
                         chain.doFilter(req, responseWrapper);
-                        String dustTemplate = responseWrapper.toString();
+                        
+                        if (response.getStatus() == HttpServletResponse.SC_NOT_FOUND) {
+                            log.info("ERROR: No dust.js template can be found at "+uri);
+                            return;
+                        } else if (response.getStatus() != HttpServletResponse.SC_OK) {
+                            log.info("ERROR: Dust.js template could not be processed at "+uri);
+                            return;
+                        }
 
+                        String dustTemplate = responseWrapper.toString();
+                        
                         log.info("Compiling output with dust.js");
                         try {
                             long startTimeMs = System.currentTimeMillis();
@@ -208,15 +217,15 @@ public class DustCompilingFilter implements Filter {
                             template = getErrorTemplate(templateName);
                         }
                     }
-
+                    
                     response.setContentType("application/json");
                     response.setContentLength(template.getBytes("UTF-8").length);
-
+                    
                     // set ETag
                     if (cache && eTagEnabled && version != null) {
                         response.setHeader("ETag", version);
                     }
-
+                    
                     out.write(template);
                     out.close();
                     return;
@@ -225,12 +234,12 @@ public class DustCompilingFilter implements Filter {
         }
         chain.doFilter(req, resp);
     }
-
+    
     @Override
     public void destroy() {
-
+        
     }
-
+    
     @SuppressWarnings("unchecked")
     private Map<String, String> getDustTemplateCache(HttpServletRequest request) {
         Map<String, String> cache = (Map<String, String>) request.getSession().getAttribute(DUST_TEMPLATE_CACHE_ATTR);
@@ -240,11 +249,11 @@ public class DustCompilingFilter implements Filter {
         }
         return cache;
     }
-
+    
     private String getErrorTemplate(String templateName) {
         return "(function(){dust.register(\"" + templateName + "\",body_0);function body_0(chk,ctx){return chk.write(\"Failed to compile template\");}return body_0;})();";
     }
-
+    
     private static String getTemplateNameRegex(String appCtx, String relativeRegex) {
         StringBuilder sb = new StringBuilder("^").append(appCtx);
         if (relativeRegex != null) {
@@ -254,15 +263,15 @@ public class DustCompilingFilter implements Filter {
         }
         return sb.toString();
     }
-
+    
     public void setCacheEnabled(boolean cacheEnabled) {
         this.cacheEnabled = cacheEnabled;
     }
-
+    
     public void setETagEnabled(boolean eTagEnabled) {
         this.eTagEnabled = eTagEnabled;
     }
-
+    
     public void setCompilerFactory(DustCompilerFactory compilerFactory) {
         if (compilerFactory == null) {
             throw new IllegalArgumentException("compilerFactory bust be not null");
@@ -270,20 +279,20 @@ public class DustCompilingFilter implements Filter {
         this.compilerFactory = compilerFactory;
         this.compiler = null;
     }
-
+    
     public void setTemplateNameRegex(String templateNameRegex) {
         this.templateNameRegex = templateNameRegex;
     }
-
+    
     public static String getURL(HttpServletRequest req) {
         String contextPath = req.getContextPath();
         String servletPath = req.getServletPath();
         String pathInfo = req.getPathInfo();
         String queryString = req.getQueryString();
-
+        
         StringBuffer url =  new StringBuffer();
         url.append(contextPath).append(servletPath);
-
+        
         if (pathInfo != null) {
             url.append(pathInfo);
         }
@@ -295,12 +304,12 @@ public class DustCompilingFilter implements Filter {
 }
 
 class CharResponseWrapper extends HttpServletResponseWrapper {
-
+    
     private ByteArrayOutputStream out;
-
+    
     private PrintWriter printWriter;
     private ServletOutputStream servletOutputStream;
-
+    
     public String toString() {
         try {
             return out.toString("UTF-8");
@@ -308,42 +317,42 @@ class CharResponseWrapper extends HttpServletResponseWrapper {
             throw new RuntimeException(e);
         }
     }
-
+    
     public CharResponseWrapper(HttpServletResponse response) {
         super(response);
         this.out = new ByteArrayOutputStream();
     }
-
+    
     @Override
     public ServletOutputStream getOutputStream() {
         if (printWriter != null) {
             throw new IllegalStateException("getWriter() was already called");
         }
-
+        
         if (servletOutputStream == null) {
             servletOutputStream = createServletOutputStream();
         }
-
+        
         return servletOutputStream;
     }
-
+    
     @Override
     public PrintWriter getWriter() throws UnsupportedEncodingException {
         if (servletOutputStream != null) {
             throw new IllegalStateException("getOutputStream() was already called");
         }
-
+        
         if (printWriter == null) {
             printWriter = createPrintWriter();
         }
-
+        
         return printWriter;
     }
-
+    
     private PrintWriter createPrintWriter() throws UnsupportedEncodingException {
         return new PrintWriter(new OutputStreamWriter(out, "UTF-8"));
     }
-
+    
     private ServletOutputStream createServletOutputStream() {
         return new ServletOutputStream() {
             @Override
